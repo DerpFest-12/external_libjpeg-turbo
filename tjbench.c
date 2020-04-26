@@ -32,28 +32,27 @@
 #include <ctype.h>
 #include <math.h>
 #include <errno.h>
-#include <limits.h>
 #include <cdjpeg.h>
 #include "./tjutil.h"
 #include "./turbojpeg.h"
 
 
-#define THROW(op, err) { \
+#define _throw(op, err) { \
   printf("ERROR in line %d while %s:\n%s\n", __LINE__, op, err); \
   retval = -1;  goto bailout; \
 }
-#define THROW_UNIX(m)  THROW(m, strerror(errno))
+#define _throwunix(m)  _throw(m, strerror(errno))
 
 char tjErrorStr[JMSG_LENGTH_MAX] = "\0", tjErrorMsg[JMSG_LENGTH_MAX] = "\0";
 int tjErrorLine = -1, tjErrorCode = -1;
 
-#define THROW_TJG(m) { \
+#define _throwtjg(m) { \
   printf("ERROR in line %d while %s:\n%s\n", __LINE__, m, \
          tjGetErrorStr2(NULL)); \
   retval = -1;  goto bailout; \
 }
 
-#define THROW_TJ(m) { \
+#define _throwtj(m) { \
   int _tjErrorCode = tjGetErrorCode(handle); \
   char *_tjErrorStr = tjGetErrorStr2(handle); \
   \
@@ -158,14 +157,11 @@ int decomp(unsigned char *srcBuf, unsigned char **jpegBuf,
   }
 
   if ((handle = tjInitDecompress()) == NULL)
-    THROW_TJ("executing tjInitDecompress()");
+    _throwtj("executing tjInitDecompress()");
 
   if (dstBuf == NULL) {
-    if ((unsigned long long)pitch * (unsigned long long)scaledh >
-        (unsigned long long)((size_t)-1))
-      THROW("allocating destination buffer", "Image is too large");
-    if ((dstBuf = (unsigned char *)malloc((size_t)pitch * scaledh)) == NULL)
-      THROW_UNIX("allocating destination buffer");
+    if ((dstBuf = (unsigned char *)malloc(pitch * scaledh)) == NULL)
+      _throwunix("allocating destination buffer");
     dstBufAlloc = 1;
   }
   /* Set the destination buffer to gray so we know whether the decompressor
@@ -175,12 +171,10 @@ int decomp(unsigned char *srcBuf, unsigned char **jpegBuf,
   if (doYUV) {
     int width = doTile ? tilew : scaledw;
     int height = doTile ? tileh : scaledh;
-    unsigned long yuvSize = tjBufSizeYUV2(width, yuvPad, height, subsamp);
+    int yuvSize = tjBufSizeYUV2(width, yuvPad, height, subsamp);
 
-    if (yuvSize == (unsigned long)-1)
-      THROW_TJ("allocating YUV buffer");
     if ((yuvBuf = (unsigned char *)malloc(yuvSize)) == NULL)
-      THROW_UNIX("allocating YUV buffer");
+      _throwunix("allocating YUV buffer");
     memset(yuvBuf, 127, yuvSize);
   }
 
@@ -203,16 +197,16 @@ int decomp(unsigned char *srcBuf, unsigned char **jpegBuf,
 
           if (tjDecompressToYUV2(handle, jpegBuf[tile], jpegSize[tile], yuvBuf,
                                  width, yuvPad, height, flags) == -1)
-            THROW_TJ("executing tjDecompressToYUV2()");
+            _throwtj("executing tjDecompressToYUV2()");
           startDecode = getTime();
           if (tjDecodeYUV(handle, yuvBuf, yuvPad, subsamp, dstPtr2, width,
                           pitch, height, pf, flags) == -1)
-            THROW_TJ("executing tjDecodeYUV()");
+            _throwtj("executing tjDecodeYUV()");
           if (iter >= 0) elapsedDecode += getTime() - startDecode;
         } else if (tjDecompress2(handle, jpegBuf[tile], jpegSize[tile],
                                  dstPtr2, width, pitch, height, pf,
                                  flags) == -1)
-          THROW_TJ("executing tjDecompress2()");
+          _throwtj("executing tjDecompress2()");
       }
     }
     elapsed += getTime() - start;
@@ -226,7 +220,7 @@ int decomp(unsigned char *srcBuf, unsigned char **jpegBuf,
   }
   if (doYUV) elapsed -= elapsedDecode;
 
-  if (tjDestroy(handle) == -1) THROW_TJ("executing tjDestroy()");
+  if (tjDestroy(handle) == -1) _throwtj("executing tjDestroy()");
   handle = NULL;
 
   if (quiet) {
@@ -266,19 +260,19 @@ int decomp(unsigned char *srcBuf, unsigned char **jpegBuf,
              qualStr, sizeStr, ext);
 
   if (tjSaveImage(tempStr, dstBuf, scaledw, 0, scaledh, pf, flags) == -1)
-    THROW_TJG("saving bitmap");
+    _throwtjg("saving bitmap");
   ptr = strrchr(tempStr, '.');
   snprintf(ptr, 1024 - (ptr - tempStr), "-err.%s", ext);
   if (srcBuf && sf.num == 1 && sf.denom == 1) {
     if (!quiet) printf("Compression error written to %s.\n", tempStr);
     if (subsamp == TJ_GRAYSCALE) {
-      unsigned long index, index2;
+      int index, index2;
 
       for (row = 0, index = 0; row < h; row++, index += pitch) {
         for (col = 0, index2 = index; col < w; col++, index2 += ps) {
-          unsigned long rindex = index2 + tjRedOffset[pf];
-          unsigned long gindex = index2 + tjGreenOffset[pf];
-          unsigned long bindex = index2 + tjBlueOffset[pf];
+          int rindex = index2 + tjRedOffset[pf];
+          int gindex = index2 + tjGreenOffset[pf];
+          int bindex = index2 + tjBlueOffset[pf];
           int y = (int)((double)srcBuf[rindex] * 0.299 +
                         (double)srcBuf[gindex] * 0.587 +
                         (double)srcBuf[bindex] * 0.114 + 0.5);
@@ -297,7 +291,7 @@ int decomp(unsigned char *srcBuf, unsigned char **jpegBuf,
             abs(dstBuf[pitch * row + col] - srcBuf[pitch * row + col]);
     }
     if (tjSaveImage(tempStr, dstBuf, w, 0, h, pf, flags) == -1)
-      THROW_TJG("saving bitmap");
+      _throwtjg("saving bitmap");
   }
 
 bailout:
@@ -319,17 +313,14 @@ int fullTest(unsigned char *srcBuf, int w, int h, int subsamp, int jpegQual,
     *srcPtr2;
   double start, elapsed, elapsedEncode;
   int totalJpegSize = 0, row, col, i, tilew = w, tileh = h, retval = 0;
-  int iter;
-  unsigned long *jpegSize = NULL, yuvSize = 0;
+  int iter, yuvSize = 0;
+  unsigned long *jpegSize = NULL;
   int ps = tjPixelSize[pf];
   int ntilesw = 1, ntilesh = 1, pitch = w * ps;
   const char *pfStr = pixFormatStr[pf];
 
-  if ((unsigned long long)pitch * (unsigned long long)h >
-      (unsigned long long)((size_t)-1))
-    THROW("allocating temporary image buffer", "Image is too large");
-  if ((tmpBuf = (unsigned char *)malloc((size_t)pitch * h)) == NULL)
-    THROW_UNIX("allocating temporary image buffer");
+  if ((tmpBuf = (unsigned char *)malloc(pitch * h)) == NULL)
+    _throwunix("allocating temporary image buffer");
 
   if (!quiet)
     printf(">>>>>  %s (%s) <--> JPEG %s Q%d  <<<<<\n", pfStr,
@@ -345,20 +336,18 @@ int fullTest(unsigned char *srcBuf, int w, int h, int subsamp, int jpegQual,
 
     if ((jpegBuf = (unsigned char **)malloc(sizeof(unsigned char *) *
                                             ntilesw * ntilesh)) == NULL)
-      THROW_UNIX("allocating JPEG tile array");
+      _throwunix("allocating JPEG tile array");
     memset(jpegBuf, 0, sizeof(unsigned char *) * ntilesw * ntilesh);
     if ((jpegSize = (unsigned long *)malloc(sizeof(unsigned long) *
                                             ntilesw * ntilesh)) == NULL)
-      THROW_UNIX("allocating JPEG size array");
+      _throwunix("allocating JPEG size array");
     memset(jpegSize, 0, sizeof(unsigned long) * ntilesw * ntilesh);
 
     if ((flags & TJFLAG_NOREALLOC) != 0)
       for (i = 0; i < ntilesw * ntilesh; i++) {
-        if (tjBufSize(tilew, tileh, subsamp) > (unsigned long)INT_MAX)
-          THROW("getting buffer size", "Image is too large");
         if ((jpegBuf[i] = (unsigned char *)
                           tjAlloc(tjBufSize(tilew, tileh, subsamp))) == NULL)
-          THROW_UNIX("allocating JPEG tiles");
+          _throwunix("allocating JPEG tiles");
       }
 
     /* Compression test */
@@ -369,14 +358,12 @@ int fullTest(unsigned char *srcBuf, int w, int h, int subsamp, int jpegQual,
     for (i = 0; i < h; i++)
       memcpy(&tmpBuf[pitch * i], &srcBuf[w * ps * i], w * ps);
     if ((handle = tjInitCompress()) == NULL)
-      THROW_TJ("executing tjInitCompress()");
+      _throwtj("executing tjInitCompress()");
 
     if (doYUV) {
       yuvSize = tjBufSizeYUV2(tilew, yuvPad, tileh, subsamp);
-      if (yuvSize == (unsigned long)-1)
-        THROW_TJ("allocating YUV buffer");
       if ((yuvBuf = (unsigned char *)malloc(yuvSize)) == NULL)
-        THROW_UNIX("allocating YUV buffer");
+        _throwunix("allocating YUV buffer");
       memset(yuvBuf, 127, yuvSize);
     }
 
@@ -400,17 +387,17 @@ int fullTest(unsigned char *srcBuf, int w, int h, int subsamp, int jpegQual,
 
             if (tjEncodeYUV3(handle, srcPtr2, width, pitch, height, pf, yuvBuf,
                              yuvPad, subsamp, flags) == -1)
-              THROW_TJ("executing tjEncodeYUV3()");
+              _throwtj("executing tjEncodeYUV3()");
             if (iter >= 0) elapsedEncode += getTime() - startEncode;
             if (tjCompressFromYUV(handle, yuvBuf, width, yuvPad, height,
                                   subsamp, &jpegBuf[tile], &jpegSize[tile],
                                   jpegQual, flags) == -1)
-              THROW_TJ("executing tjCompressFromYUV()");
+              _throwtj("executing tjCompressFromYUV()");
           } else {
             if (tjCompress2(handle, srcPtr2, width, pitch, height, pf,
                             &jpegBuf[tile], &jpegSize[tile], subsamp, jpegQual,
                             flags) == -1)
-              THROW_TJ("executing tjCompress2()");
+              _throwtj("executing tjCompress2()");
           }
           totalJpegSize += jpegSize[tile];
         }
@@ -426,7 +413,7 @@ int fullTest(unsigned char *srcBuf, int w, int h, int subsamp, int jpegQual,
     }
     if (doYUV) elapsed -= elapsedEncode;
 
-    if (tjDestroy(handle) == -1) THROW_TJ("executing tjDestroy()");
+    if (tjDestroy(handle) == -1) _throwtj("executing tjDestroy()");
     handle = NULL;
 
     if (quiet == 1) printf("%-5d  %-5d   ", tilew, tileh);
@@ -449,7 +436,7 @@ int fullTest(unsigned char *srcBuf, int w, int h, int subsamp, int jpegQual,
       if (doYUV) {
         printf("Encode YUV    --> Frame rate:         %f fps\n",
                (double)iter / elapsedEncode);
-        printf("                  Output image size:  %lu bytes\n", yuvSize);
+        printf("                  Output image size:  %d bytes\n", yuvSize);
         printf("                  Compression ratio:  %f:1\n",
                (double)(w * h * ps) / (double)yuvSize);
         printf("                  Throughput:         %f Megapixels/sec\n",
@@ -473,9 +460,9 @@ int fullTest(unsigned char *srcBuf, int w, int h, int subsamp, int jpegQual,
       snprintf(tempStr, 1024, "%s_%s_Q%d.jpg", fileName, subName[subsamp],
                jpegQual);
       if ((file = fopen(tempStr, "wb")) == NULL)
-        THROW_UNIX("opening reference image");
+        _throwunix("opening reference image");
       if (fwrite(jpegBuf[0], jpegSize[0], 1, file) != 1)
-        THROW_UNIX("writing reference image");
+        _throwunix("writing reference image");
       fclose(file);  file = NULL;
       if (!quiet) printf("Reference image written to %s\n", tempStr);
     }
@@ -534,28 +521,28 @@ int decompTest(char *fileName)
   int tw, th, ttilew, ttileh, tntilesw, tntilesh, tsubsamp;
 
   if ((file = fopen(fileName, "rb")) == NULL)
-    THROW_UNIX("opening file");
+    _throwunix("opening file");
   if (fseek(file, 0, SEEK_END) < 0 ||
       (srcSize = ftell(file)) == (unsigned long)-1)
-    THROW_UNIX("determining file size");
+    _throwunix("determining file size");
   if ((srcBuf = (unsigned char *)malloc(srcSize)) == NULL)
-    THROW_UNIX("allocating memory");
+    _throwunix("allocating memory");
   if (fseek(file, 0, SEEK_SET) < 0)
-    THROW_UNIX("setting file position");
+    _throwunix("setting file position");
   if (fread(srcBuf, srcSize, 1, file) < 1)
-    THROW_UNIX("reading JPEG data");
+    _throwunix("reading JPEG data");
   fclose(file);  file = NULL;
 
   temp = strrchr(fileName, '.');
   if (temp != NULL) *temp = '\0';
 
   if ((handle = tjInitTransform()) == NULL)
-    THROW_TJ("executing tjInitTransform()");
+    _throwtj("executing tjInitTransform()");
   if (tjDecompressHeader3(handle, srcBuf, srcSize, &w, &h, &subsamp,
                           &cs) == -1)
-    THROW_TJ("executing tjDecompressHeader3()");
+    _throwtj("executing tjDecompressHeader3()");
   if (w < 1 || h < 1)
-    THROW("reading JPEG header", "Invalid image dimensions");
+    _throw("reading JPEG header", "Invalid image dimensions");
   if (cs == TJCS_YCCK || cs == TJCS_CMYK) {
     pf = TJPF_CMYK;  ps = tjPixelSize[pf];
   }
@@ -583,21 +570,18 @@ int decompTest(char *fileName)
 
     if ((jpegBuf = (unsigned char **)malloc(sizeof(unsigned char *) *
                                             ntilesw * ntilesh)) == NULL)
-      THROW_UNIX("allocating JPEG tile array");
+      _throwunix("allocating JPEG tile array");
     memset(jpegBuf, 0, sizeof(unsigned char *) * ntilesw * ntilesh);
     if ((jpegSize = (unsigned long *)malloc(sizeof(unsigned long) *
                                             ntilesw * ntilesh)) == NULL)
-      THROW_UNIX("allocating JPEG size array");
+      _throwunix("allocating JPEG size array");
     memset(jpegSize, 0, sizeof(unsigned long) * ntilesw * ntilesh);
 
-    if ((flags & TJFLAG_NOREALLOC) != 0 &&
-        (doTile || xformOp != TJXOP_NONE || xformOpt != 0 || customFilter))
+    if ((flags & TJFLAG_NOREALLOC) != 0 || !doTile)
       for (i = 0; i < ntilesw * ntilesh; i++) {
-        if (tjBufSize(tilew, tileh, subsamp) > (unsigned long)INT_MAX)
-          THROW("getting buffer size", "Image is too large");
         if ((jpegBuf[i] = (unsigned char *)
                           tjAlloc(tjBufSize(tilew, tileh, subsamp))) == NULL)
-          THROW_UNIX("allocating JPEG tiles");
+          _throwunix("allocating JPEG tiles");
       }
 
     tw = w;  th = h;  ttilew = tilew;  ttileh = tileh;
@@ -617,7 +601,7 @@ int decompTest(char *fileName)
     if (doTile || xformOp != TJXOP_NONE || xformOpt != 0 || customFilter) {
       if ((t = (tjtransform *)malloc(sizeof(tjtransform) * ntilesw *
                                      ntilesh)) == NULL)
-        THROW_UNIX("allocating image transform array");
+        _throwunix("allocating image transform array");
 
       if (xformOp == TJXOP_TRANSPOSE || xformOp == TJXOP_TRANSVERSE ||
           xformOp == TJXOP_ROT90 || xformOp == TJXOP_ROT270) {
@@ -663,7 +647,7 @@ int decompTest(char *fileName)
         start = getTime();
         if (tjTransform(handle, srcBuf, srcSize, tntilesw * tntilesh, jpegBuf,
                         jpegSize, t, flags) == -1)
-          THROW_TJ("executing tjTransform()");
+          _throwtj("executing tjTransform()");
         elapsed += getTime() - start;
         if (iter >= 0) {
           iter++;
@@ -700,7 +684,7 @@ int decompTest(char *fileName)
       }
     } else {
       if (quiet == 1) printf("N/A     N/A     ");
-      if(jpegBuf[0]) tjFree(jpegBuf[0]);
+      tjFree(jpegBuf[0]);
       jpegBuf[0] = NULL;
       decompsrc = 1;
     }
@@ -715,8 +699,7 @@ int decompTest(char *fileName)
     } else if (quiet == 1) printf("N/A\n");
 
     for (i = 0; i < ntilesw * ntilesh; i++) {
-      if(jpegBuf[i]) tjFree(jpegBuf[i]);
-      jpegBuf[i] = NULL;
+      tjFree(jpegBuf[i]);  jpegBuf[i] = NULL;
     }
     free(jpegBuf);  jpegBuf = NULL;
     if (jpegSize) { free(jpegSize);  jpegSize = NULL; }
@@ -820,7 +803,7 @@ int main(int argc, char *argv[])
   int minArg = 2, retval = 0, subsamp = -1;
 
   if ((scalingFactors = tjGetScalingFactors(&nsf)) == NULL || nsf == 0)
-    THROW("executing tjGetScalingFactors()", tjGetErrorStr());
+    _throw("executing tjGetScalingFactors()", tjGetErrorStr());
 
   if (argc < minArg) usage(argv[0]);
 
@@ -978,7 +961,7 @@ int main(int argc, char *argv[])
 
   if (!decompOnly) {
     if ((srcBuf = tjLoadImage(argv[1], &w, 1, &h, &pf, flags)) == NULL)
-      THROW_TJG("loading bitmap");
+      _throwtjg("loading bitmap");
     temp = strrchr(argv[1], '.');
     if (temp != NULL) *temp = '\0';
   }
